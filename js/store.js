@@ -11,6 +11,10 @@ const DEFAULTS = {
 };
 
 let state = load();
+let canSave = true;
+
+// Ask the browser not to clear our data (helps on iOS home-screen apps).
+try { navigator.storage?.persist?.(); } catch { /* not supported */ }
 
 function load() {
   try {
@@ -26,12 +30,16 @@ function load() {
 function save() {
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
+    canSave = true;
   } catch {
     // Storage full or blocked: the app keeps working in memory.
+    canSave = false;
   }
 }
 
 export const store = {
+  // False when the phone refuses to save (Private Browsing, blocked cookies).
+  get canSave() { return canSave; },
   get settings() { return state.settings; },
   setSettings(patch) { state.settings = { ...state.settings, ...patch }; save(); },
 

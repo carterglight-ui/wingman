@@ -109,7 +109,8 @@ function onboarding() {
         <input name="age" inputmode="numeric" pattern="[0-9]*" value="${esc(s.age)}" placeholder="e.g. 26"></label>
       <label class="field"><span>Claude API key</span>
         <input name="apiKey" type="password" autocomplete="off" value="${esc(s.apiKey)}" placeholder="sk-ant-..." required></label>
-      <p class="hint">Wingman uses Claude to play her and to coach you. Get a key at <b>console.anthropic.com</b> → API Keys. It is stored only on this phone.</p>
+      <p class="hint">Wingman uses Claude to play her and to coach you. Get a key at <b>console.anthropic.com</b> → API Keys. You only enter it once. It is stored only on this phone.</p>
+      <p class="hint">Using the home-screen app? Enter your key there. Safari and the home-screen app keep separate storage.</p>
       <label class="check"><input type="checkbox" name="ageOk" ${s.ageOk ? 'checked' : ''} required> <span>I am 18 or older</span></label>
       <button class="btn primary block" type="submit">Let's go</button>
     </form>
@@ -120,6 +121,9 @@ function onboarding() {
     store.setSettings({
       name: f.get('name').trim(), age: f.get('age').trim(), apiKey: f.get('apiKey').trim(), ageOk: f.get('ageOk') === 'on',
     });
+    if (!store.canSave) {
+      toast("Your phone is blocking Wingman from saving. Turn off Private Browsing (and Settings → Safari → Block All Cookies), or you'll have to re-enter your key.");
+    }
     go('home');
   });
 }

@@ -1,6 +1,6 @@
 // Network-first service worker: always loads the newest version when online,
 // falls back to the cached app shell when offline.
-const CACHE = 'wingman-v1';
+const CACHE = 'wingman-v2';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => {
