@@ -1,0 +1,11 @@
+{
+  "name": "wingman",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:artifact": "node tools/build-artifact.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

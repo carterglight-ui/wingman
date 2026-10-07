@@ -73,7 +73,9 @@ function go(name, params = {}) {
 
 function render() {
   const s = store.settings;
-  if ((!s.ageOk || !s.apiKey) && current.name !== 'settings') current = { name: 'onboarding', params: {} };
+  if (ai.backend === 'none') return unavailable();
+  const needsKey = ai.backend === 'key' && !s.apiKey;
+  if ((!s.ageOk || needsKey) && current.name !== 'settings') current = { name: 'onboarding', params: {} };
   const screen = SCREENS[current.name] || SCREENS.home;
   document.body.dataset.screen = current.name;
   tabbar.hidden = !TAB_SCREENS.includes(current.name);
@@ -87,6 +89,16 @@ tabbar.addEventListener('click', (e) => {
 });
 
 /* --------------------------- onboarding -------------------------- */
+
+function unavailable() {
+  tabbar.hidden = true;
+  app.innerHTML = `
+  <div class="screen loading">
+    <div class="logo-mark big">${icon('wing')}</div>
+    <h2>Wingman couldn't connect to Claude</h2>
+    <p class="muted center">Open this link in the Claude app or at claude.ai while signed in, then reload the page.</p>
+  </div>`;
+}
 
 function onboarding() {
   const s = store.settings;
@@ -107,10 +119,12 @@ function onboarding() {
         <input name="name" autocomplete="given-name" value="${esc(s.name)}" placeholder="e.g. Jake"></label>
       <label class="field"><span>Your age <em>(optional, keeps her age realistic)</em></span>
         <input name="age" inputmode="numeric" pattern="[0-9]*" value="${esc(s.age)}" placeholder="e.g. 26"></label>
+      ${ai.backend === 'key' ? `
       <label class="field"><span>Claude API key</span>
         <input name="apiKey" type="password" autocomplete="off" value="${esc(s.apiKey)}" placeholder="sk-ant-..." required></label>
       <p class="hint">Wingman uses Claude to play her and to coach you. Get a key at <b>console.anthropic.com</b> → API Keys. You only enter it once. It is stored only on this phone.</p>
-      <p class="hint">Using the home-screen app? Enter your key there. Safari and the home-screen app keep separate storage.</p>
+      <p class="hint">Using the home-screen app? Enter your key there. Safari and the home-screen app keep separate storage.</p>` : `
+      <p class="hint">Wingman runs on your Claude account. No API key needed. The first time she replies, Claude will ask you to allow it.</p>`}
       <label class="check"><input type="checkbox" name="ageOk" ${s.ageOk ? 'checked' : ''} required> <span>I am 18 or older</span></label>
       <button class="btn primary block" type="submit">Let's go</button>
     </form>
@@ -119,7 +133,8 @@ function onboarding() {
     e.preventDefault();
     const f = new FormData(e.target);
     store.setSettings({
-      name: f.get('name').trim(), age: f.get('age').trim(), apiKey: f.get('apiKey').trim(), ageOk: f.get('ageOk') === 'on',
+      name: f.get('name').trim(), age: f.get('age').trim(), ageOk: f.get('ageOk') === 'on',
+      ...(f.has('apiKey') ? { apiKey: f.get('apiKey').trim() } : {}),
     });
     if (!store.canSave) {
       toast("Your phone is blocking Wingman from saving. Turn off Private Browsing (and Settings → Safari → Block All Cookies), or you'll have to re-enter your key.");
@@ -927,31 +942,34 @@ function settings() {
     <form class="card form" id="setForm">
       <label class="field"><span>Your first name</span><input name="name" value="${esc(s.name)}" placeholder="Optional"></label>
       <label class="field"><span>Your age</span><input name="age" inputmode="numeric" value="${esc(s.age)}" placeholder="Optional"></label>
-      <label class="field"><span>Claude API key</span>
+      ${ai.backend === 'key' ? `<label class="field"><span>Claude API key</span>
         <div class="key-row"><input name="apiKey" type="password" value="${esc(s.apiKey)}" placeholder="sk-ant-..." autocomplete="off"><button type="button" class="btn ghost small" id="showKey">Show</button></div></label>
       <label class="field"><span>AI model</span>
         <select name="model">
           <option value="claude-opus-5-5" ${s.model === 'claude-opus-5-5' ? 'selected' : ''}>Claude Opus 5.5 (most realistic)</option>
           <option value="claude-sonnet-5-5" ${s.model === 'claude-sonnet-5-5' ? 'selected' : ''}>Claude Sonnet 5.5 (faster, cheaper)</option>
-        </select></label>
+        </select></label>` : '<p class="hint">Running on your Claude account. No API key needed.</p>'}
       <button class="btn primary block" type="submit">Save</button>
     </form>
     <div class="card about">
       <h3>About Wingman</h3>
       <p>Wingman helps men communicate with women the way confident, respectful men do: by being themselves, staying curious, leading with clear intentions and reading the room. No tricks. No scripts.</p>
-      <p class="muted small">Your API key and history are stored only on this device. Conversations are sent to Claude to generate replies and coaching.</p>
+      <p class="muted small">Your history is stored only on this device. Conversations are sent to Claude to generate replies and coaching.</p>
     </div>
     <button class="btn danger block" id="clear">Clear conversation history</button>
   </div>`;
-  app.querySelector('#showKey').onclick = (e) => {
+  app.querySelector('#showKey')?.addEventListener('click', (e) => {
     const inp = app.querySelector('[name=apiKey]');
     inp.type = inp.type === 'password' ? 'text' : 'password';
     e.target.textContent = inp.type === 'password' ? 'Show' : 'Hide';
-  };
+  });
   app.querySelector('#setForm').addEventListener('submit', (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    store.setSettings({ name: f.get('name').trim(), age: f.get('age').trim(), apiKey: f.get('apiKey').trim(), model: f.get('model') });
+    store.setSettings({
+      name: f.get('name').trim(), age: f.get('age').trim(),
+      ...(f.has('apiKey') ? { apiKey: f.get('apiKey').trim(), model: f.get('model') } : {}),
+    });
     toast('Saved');
     if (!store.settings.ageOk) go('onboarding');
   });
@@ -983,8 +1001,9 @@ window.visualViewport?.addEventListener('resize', syncViewport);
 window.addEventListener('resize', syncViewport);
 syncViewport();
 
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
+if ('serviceWorker' in navigator && location.protocol === 'https:' && !window.claude) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
-render();
+if (window.claude) loadingScreen('Warming up…', ['Connecting to Claude']);
+ai.initBackend().then(render);

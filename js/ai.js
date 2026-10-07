@@ -9,16 +9,67 @@ import Anthropic from './vendor/anthropic.js';
 import { store } from './store.js';
 import { CATEGORIES } from './data.js';
 
-function client() {
-  const { apiKey } = store.settings;
-  if (!apiKey) throw new Error('Add your Claude API key in Settings first.');
-  return new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+/* ---------------------------- backends ---------------------------- */
+// Two ways to reach Claude:
+//   'claude' - opened as a claude.ai link: runs on the viewer's own Claude
+//              account through the page's `sample` capability. No API key.
+//   'key'    - opened anywhere else (e.g. GitHub Pages): calls the Claude API
+//              directly with the API key saved on this phone.
+
+let sample = null;
+export let backend = 'key';
+
+export async function initBackend() {
+  if (window.claude?.use) {
+    try { sample = await window.claude.use('sample'); } catch { sample = null; }
+    backend = sample ? 'claude' : 'none';
+  } else {
+    backend = 'key';
+  }
+  return backend;
 }
 
-async function callJSON({ system, prompt, schema, effort, maxTokens }) {
+const SAMPLE_ERRORS = {
+  not_granted: 'Wingman needs permission to use Claude. Reload the page and tap Allow.',
+  sampling_disabled: 'Claude is not available for this account.',
+  rate_limited: 'You have hit your Claude usage limit for now. Try again a bit later.',
+  session_expired: 'Your Claude session expired. Sign in to claude.ai again.',
+  refused: 'Claude declined to continue this conversation. Try ending it and starting a new one.',
+  invalid_json: 'The AI sent back something unreadable. Please try again.',
+};
+
+async function callJSON({ system, prompt, schema, effort, maxTokens, tier }) {
+  const raw = backend === 'claude'
+    ? await callSample({ system, prompt, schema, tier })
+    : await callApi({ system, prompt, schema, effort, maxTokens });
+  return normalize(schema, raw);
+}
+
+async function callSample({ system, prompt, schema, tier }) {
+  const input = `<instructions>
+${system}
+</instructions>
+
+<task>
+${prompt}
+</task>
+
+Reply with only one JSON value of exactly this shape (every field required, no extra fields, no commentary):
+${shape(schema)}`;
+  try {
+    return await sample.json(input, { modelTier: tier, cache: false });
+  } catch (err) {
+    throw new Error(SAMPLE_ERRORS[err?.code] || 'Could not reach Claude. Check your connection and try again.');
+  }
+}
+
+async function callApi({ system, prompt, schema, effort, maxTokens }) {
+  const { apiKey } = store.settings;
+  if (!apiKey) throw new Error('Add your Claude API key in Settings first.');
+  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
   let response;
   try {
-    response = await client().beta.messages.create({
+    response = await client.beta.messages.create({
       model: store.settings.model || 'claude-opus-5-5',
       max_tokens: maxTokens,
       betas: ['server-side-fallback-2026-07-01'],
@@ -28,10 +79,13 @@ async function callJSON({ system, prompt, schema, effort, maxTokens }) {
       messages: [{ role: 'user', content: prompt }],
     });
   } catch (err) {
-    if (err instanceof Anthropic.AuthenticationError) throw new Error('Your API key was rejected. Check it in Settings.');
+    if (err instanceof Anthropic.AuthenticationError) throw new Error('Your API key was rejected. Make a new key at console.anthropic.com and paste it in the You tab.');
     if (err instanceof Anthropic.RateLimitError) throw new Error('Too many requests right now. Wait a few seconds and try again.');
     if (err instanceof Anthropic.APIConnectionError) throw new Error('Could not reach the AI. Check your internet connection.');
-    if (err instanceof Anthropic.APIError) throw new Error(`AI error (${err.status ?? 'unknown'}): ${err.message}`);
+    if (err instanceof Anthropic.APIError) {
+      if (/credit balance/i.test(err.message)) throw new Error('Your Anthropic account is out of credit. Add some under Billing at console.anthropic.com.');
+      throw new Error(`AI error (${err.status ?? 'unknown'}): ${err.message}`);
+    }
     throw err;
   }
   if (response.stop_reason === 'refusal') {
@@ -46,6 +100,31 @@ async function callJSON({ system, prompt, schema, effort, maxTokens }) {
   } catch {
     throw new Error('The AI sent back something unreadable. Please try again.');
   }
+}
+
+// A compact, readable description of a JSON schema for the prompt.
+function shape(s) {
+  if (s.enum) return s.enum.map((e) => JSON.stringify(e)).join(' | ');
+  if (s.type === 'string') return 'string';
+  if (s.type === 'integer') return 'integer';
+  if (s.type === 'array') return `[${shape(s.items)}, ...]`;
+  if (s.type === 'object') {
+    return `{ ${Object.entries(s.properties).map(([k, v]) => `"${k}": ${shape(v)}`).join(', ')} }`;
+  }
+  return 'any';
+}
+
+// Coerce a reply into the schema so a slightly-off answer never breaks the UI.
+function normalize(s, v) {
+  if (s.enum) return s.enum.includes(v) ? v : s.enum[0];
+  if (s.type === 'string') return v == null ? '' : String(v);
+  if (s.type === 'integer') return Math.round(Number(v)) || 0;
+  if (s.type === 'array') return Array.isArray(v) ? v.map((x) => normalize(s.items, x)) : [];
+  if (s.type === 'object') {
+    const o = v && typeof v === 'object' ? v : {};
+    return Object.fromEntries(Object.entries(s.properties).map(([k, sub]) => [k, normalize(sub, o[k])]));
+  }
+  return v;
 }
 
 // Shared JSON-schema helpers (structured outputs need additionalProperties: false).
@@ -108,7 +187,7 @@ Fill in:
 - her_private_take: her honest private view of him and this situation so far, 1-3 sentences, consistent with her interest level and hidden circumstance. (For the after-date scenario, this is how SHE really felt about the date, which may differ from his view.)
 - opening_message: ${scenario.herFirst ? 'her first message to him, written exactly how she would text it in her style.' : 'an empty string.'}`;
 
-  return callJSON({ system, prompt, schema: SETUP_SCHEMA, effort: 'low', maxTokens: 8000 });
+  return callJSON({ system, prompt, schema: SETUP_SCHEMA, effort: 'low', maxTokens: 8000, tier: 'default' });
 }
 
 /* ------------------------------ Her ------------------------------ */
@@ -198,7 +277,7 @@ ${transcriptText(session)}
 Your current interest level: ${interest}/100.
 ${trailingMine > 1 ? `He has sent ${trailingMine} messages in a row since you last replied.` : ''}
 Decide what you do next.`;
-  return callJSON({ system: herSystem(session), prompt, schema: TURN_SCHEMA, effort: 'low', maxTokens: 6000 });
+  return callJSON({ system: herSystem(session), prompt, schema: TURN_SCHEMA, effort: 'low', maxTokens: 6000, tier: 'default' });
 }
 
 /* ---------------------------- Coach ----------------------------- */
@@ -236,7 +315,7 @@ Give:
 - vibe: how warm she seems based only on what is visible.
 - read: 1-3 sentences on what is going on and the signals you see.
 - tip: one short, concrete piece of advice for his next move (not a script).`;
-  return callJSON({ system, prompt, schema: TIMEOUT_SCHEMA, effort: 'low', maxTokens: 4000 });
+  return callJSON({ system, prompt, schema: TIMEOUT_SCHEMA, effort: 'low', maxTokens: 4000, tier: 'quick' });
 }
 
 const GRADES = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D', 'F'];
@@ -316,5 +395,5 @@ ${lines.join('\n')}
 
 Grade it.`;
 
-  return callJSON({ system, prompt, schema: RESULT_SCHEMA, effort: 'medium', maxTokens: 16000 });
+  return callJSON({ system, prompt, schema: RESULT_SCHEMA, effort: 'medium', maxTokens: 16000, tier: 'default' });
 }

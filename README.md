@@ -15,7 +15,12 @@ charisma, leading with clear plans, reading signals, and respect.
   her private thoughts, interest graph, friendship vs. romance read, red and green flags (hers and yours), rewrites.
 - **Progress** tracking and a **Playbook** of short lessons.
 
-## Run it on your phone
+## Easiest: the private Claude link (no API key)
+`npm install && npm run build:artifact` builds `dist/wingman.html`, a single page published as a private
+claude.ai artifact with the `sample` capability. Opened there, Wingman runs on the viewer's own Claude
+account, so no API key is needed. Claude asks once for permission the first time she replies.
+
+## Or host it yourself (uses an API key)
 It is a static web app with no build step. The easiest host is GitHub Pages:
 1. Push this folder to a GitHub repo.
 2. In the repo, go to **Settings → Pages**, set **Source: Deploy from a branch**, **Branch: main / (root)**, then Save.
